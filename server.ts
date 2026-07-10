@@ -76,6 +76,106 @@ If a customer asks about active emergency help, remind them to call 07421 495104
   }
 });
 
+// Google Calendar Booking & Dispatch Integration
+app.post("/api/calendar/add-event", async (req, res) => {
+  try {
+    const { 
+      name, 
+      phone, 
+      email, 
+      address, 
+      postcode, 
+      serviceType, 
+      urgency, 
+      preferredDateTime, 
+      description,
+      accessToken 
+    } = req.body;
+
+    if (!accessToken) {
+      return res.status(401).json({ error: "Unauthorized. Google Access Token is required." });
+    }
+
+    // Call Gemini to convert preferred arrival date/time and urgency into standard ISO-8601 start and end times
+    const currentISO = new Date().toISOString();
+    const prompt = `Convert the following plumbing appointment booking preferred time or description into a structured JSON with "start" (ISO 8601 string in Europe/London timezone) and "end" (ISO 8601 string in Europe/London timezone, typically 1 hour after start).
+Current local time: ${currentISO} (Europe/London timezone).
+User Preferred Time input: "${preferredDateTime}"
+Urgency level: "${urgency}"
+
+Rules:
+1. If the preferred time is "Immediate Emergency Dispatch", "As soon as possible", or similar immediate callout, set start time to current time and end to 1 hour later.
+2. If the user specifies a particular day (e.g., "Tomorrow at 10am", "this Saturday", "next Monday at 2pm"), compute that date relative to current time.
+3. If no year is mentioned, assume 2026.
+4. Output MUST be ONLY a valid raw JSON object matching this structure:
+{
+  "start": "2026-07-10T10:00:00+01:00",
+  "end": "2026-07-10T11:00:00+01:00"
+}
+Do not include any markdown formatting or explanation, just the raw JSON.`;
+
+    let startISO = currentISO;
+    let endISO = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    try {
+      const geminiResponse = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+      });
+
+      const responseText = geminiResponse.text?.trim() || "";
+      // Clean markdown code blocks if any
+      const cleanedJSONStr = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleanedJSONStr);
+      if (parsed.start && parsed.end) {
+        startISO = parsed.start;
+        endISO = parsed.end;
+      }
+    } catch (parseError) {
+      console.error("Gemini Date Parsing Error (using fallback):", parseError);
+    }
+
+    // Call Google Calendar API to insert the event
+    const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        summary: `Gurus Plumbing: ${serviceType} - ${name}`,
+        location: `${address}, ${postcode}`,
+        description: `--- NEW GURUS PLUMBING BOOKING ALERT ---\n\nCustomer Name: ${name}\nPhone Number: ${phone}\nEmail Address: ${email}\nSelected Service: ${serviceType}\nUrgency Level: ${urgency.toUpperCase()}\nPreferred Time: ${preferredDateTime}\n\nAdditional Notes: ${description || 'N/A'}\n\nGenerated via Gas & Plumbing Gurus Portal.`,
+        start: {
+          dateTime: startISO,
+          timeZone: 'Europe/London'
+        },
+        end: {
+          dateTime: endISO,
+          timeZone: 'Europe/London'
+        },
+        attendees: [
+          { email: 'gasplumbinggurus@gmail.com' },
+          { email: email }
+        ]
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      console.error("Google Calendar API Error Details:", data);
+      return res.status(response.status).json({ 
+        error: data.error?.message || "Failed to create Google Calendar event." 
+      });
+    }
+
+    res.json({ success: true, event: data });
+  } catch (error: any) {
+    console.error("Calendar Booking Error:", error);
+    res.status(500).json({ error: error.message || "Internal server error during booking." });
+  }
+});
+
 // Health check endpoint
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });

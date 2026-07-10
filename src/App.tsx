@@ -14,7 +14,8 @@ import ContactForm from './components/ContactForm';
 import BookingConfirmation from './components/BookingConfirmation';
 import AboutUs from './components/AboutUs';
 import Footer from './components/Footer';
-import AIChatbot from './components/AIChatbot';
+import AdminPortal from './components/AdminPortal';
+import { initAuth } from './lib/firebaseAuth';
 import { 
   Phone, 
   ShieldAlert, 
@@ -74,6 +75,21 @@ export default function App() {
   // Local area search for borough check in London
   const [searchNeighbourhood, setSearchNeighbourhood] = useState('');
   const [searchResult, setSearchResult] = useState<string | null>(null);
+
+  // Google OAuth State for background calendar synchronizations
+  const [googleToken, setGoogleToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = initAuth(
+      (currentUser, accessToken) => {
+        setGoogleToken(accessToken);
+      },
+      () => {
+        setGoogleToken(null);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
 
   // Initialize reviews and inquiry state from localStorage
   useEffect(() => {
@@ -167,8 +183,40 @@ Additional Notes: ${inquiry.description || 'N/A'}`;
       window.open(smsUrl, '_blank');
     }
 
-    setCurrentInquiry(inquiry);
-    localStorage.setItem('active_plumbing_inquiry', JSON.stringify(inquiry));
+    // Append to list of total bookings
+    const savedBookings = localStorage.getItem('gurus_bookings');
+    const bookingsList = savedBookings ? JSON.parse(savedBookings) : [];
+    const updatedInquiry = { ...inquiry, status: (googleToken ? 'synced' : 'pending') as any };
+    bookingsList.unshift(updatedInquiry);
+    localStorage.setItem('gurus_bookings', JSON.stringify(bookingsList));
+
+    // Auto-sync in background to Google Calendar if user/plumber is authorized
+    if (googleToken) {
+      fetch('/api/calendar/add-event', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ...inquiry,
+          accessToken: googleToken
+        })
+      })
+      .then(res => res.json())
+      .then(data => {
+        console.log("Automatically synchronized booking to Google Calendar:", data);
+      })
+      .catch(err => {
+        console.error("Auto-sync background error:", err);
+        // Fallback status to pending if it failed
+        const freshList = JSON.parse(localStorage.getItem('gurus_bookings') || '[]');
+        const updated = freshList.map((b: any) => b.id === inquiry.id ? { ...b, status: 'pending' } : b);
+        localStorage.setItem('gurus_bookings', JSON.stringify(updated));
+      });
+    }
+
+    setCurrentInquiry(updatedInquiry);
+    localStorage.setItem('active_plumbing_inquiry', JSON.stringify(updatedInquiry));
     setTransmissionInquiry(null);
     setActiveTab('booking-confirmation');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -179,6 +227,47 @@ Additional Notes: ${inquiry.description || 'N/A'}`;
     setCurrentInquiry(null);
     localStorage.removeItem('active_plumbing_inquiry');
     setActiveTab('home');
+  };
+
+  // Generate test bookings for testing Google Calendar sync
+  const handleAddTestBooking = () => {
+    const testNames = ['Sarah Jenkins', 'John Doe', 'Robert Smith', 'Emma Watson', 'James Brown'];
+    const services = ['Boiler Servicing', 'Drain Unblocking', 'Emergency Pipe Repair', 'Radiator Installation', 'Gas Leak Safety Check'];
+    const postcodes = ['SW2 1HD', 'SW9 6TQ', 'SW16 4AA', 'SE24 0HJ', 'SW11 5BB'];
+    const addresses = ['12 Brixton Hill Road', '45 Clapham High St', '109 Streatham Common', '34 Herne Hill', '89 Battersea Park Road'];
+    
+    const randomName = testNames[Math.floor(Math.random() * testNames.length)];
+    const randomService = services[Math.floor(Math.random() * services.length)];
+    const randomPostcode = postcodes[Math.floor(Math.random() * postcodes.length)];
+    const randomAddress = addresses[Math.floor(Math.random() * addresses.length)];
+    
+    const testInquiry: Inquiry = {
+      id: 'gp_lead_' + Math.random().toString(36).substr(2, 9),
+      name: randomName,
+      phone: '07700 900' + Math.floor(100 + Math.random() * 900),
+      email: randomName.toLowerCase().replace(' ', '.') + '@example.com',
+      address: randomAddress,
+      postcode: randomPostcode,
+      serviceType: randomService,
+      urgency: Math.random() > 0.5 ? 'emergency' : 'standard',
+      preferredDateTime: 'Tomorrow morning, 10:00 AM',
+      description: 'Test plumbing booking generated for calendar validation.',
+      createdAt: new Date().toISOString(),
+      status: 'pending',
+      assignedGuru: {
+        name: 'Alan (Guru Plumber)',
+        gasSafeId: '618290',
+        avatarUrl: 'https://images.unsplash.com/photo-1540569014015-19a7be504e3a?w=150&auto=format&fit=crop&q=60',
+        etaMinutes: 20,
+        distanceMiles: 1.4,
+        phone: '07421 495104'
+      }
+    };
+
+    const saved = localStorage.getItem('gurus_bookings');
+    const list = saved ? JSON.parse(saved) : [];
+    list.unshift(testInquiry);
+    localStorage.setItem('gurus_bookings', JSON.stringify(list));
   };
 
   // Service Area Finder Checker
@@ -601,6 +690,10 @@ Additional Notes: ${inquiry.description || 'N/A'}`;
               preselectedService={preselectedService} 
             />
           </div>
+        )}
+
+        {activeTab === 'admin' && (
+          <AdminPortal onAddTestBooking={handleAddTestBooking} />
         )}
 
       </main>
@@ -1036,9 +1129,6 @@ Preferred Date & Time: ${transmissionInquiry.preferredDateTime}`}
           </motion.div>
         </div>
       )}
-
-      {/* 24/7 AI Plumbing Chatbot */}
-      <AIChatbot />
 
     </div>
   );

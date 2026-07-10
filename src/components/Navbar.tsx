@@ -37,7 +37,8 @@ export default function Navbar({ activeTab, setActiveTab, openBookingModal }: Na
     { id: 'services', label: 'Our Services' },
     { id: 'about', label: 'About Us' },
     { id: 'reviews', label: 'Reviews' },
-    { id: 'contact', label: 'Contact Us' }
+    { id: 'contact', label: 'Contact Us' },
+    { id: 'admin', label: 'Calendar Admin' }
   ];
 
   const handleNavClick = (id: string) => {
