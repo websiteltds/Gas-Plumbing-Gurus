@@ -1,0 +1,6 @@
+{
+  "name": "Gas & Plumbing Gurus LTD",
+  "description": "Modern, high-converting, mobile-first website for Gas & Plumbing Gurus LTD, a London-based plumbing and heating company based in Brixton Hill.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
